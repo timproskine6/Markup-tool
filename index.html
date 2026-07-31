@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<title>Fire Sprinkler Plan Markup</title>
+<link rel="manifest" href="./manifest.json" />
+<meta name="theme-color" content="#0f172a" />
+<link rel="apple-touch-icon" href="./icons/icon-192.png" />
+<link rel="icon" href="./icons/icon-192.png" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+
+<div id="upload-screen" class="screen">
+  <div class="upload-card">
+    <h1>Fire Sprinkler Plan Markup</h1>
+    <p class="subtitle">Upload a building plan PDF to start placing sprinkler symbols. Everything stays on this device.</p>
+    <div id="drop-zone" class="drop-zone">
+      <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M12 16V4M12 4l-4 4M12 4l4 4" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <div>Tap to choose a PDF, or drag one here</div>
+      <input id="file-input" type="file" accept="application/pdf" hidden />
+    </div>
+  </div>
+</div>
+
+<div id="editor-screen" class="screen hidden">
+  <header class="topbar">
+    <button id="palette-toggle-btn" class="btn btn-ghost icon-only-mobile" title="Symbols">▤</button>
+    <input id="project-name" class="project-name-input" value="Untitled Project" />
+    <div class="topbar-spacer"></div>
+    <span id="save-status" class="save-status">—</span>
+    <button id="legend-toggle-btn" class="btn btn-ghost icon-only-mobile" title="Legend">≣</button>
+    <button id="new-project-btn" class="btn btn-ghost">New</button>
+  </header>
+
+  <div class="body">
+    <div id="panel-scrim" class="panel-scrim hidden"></div>
+    <aside id="palette-panel" class="palette-panel">
+      <div id="palette-container"></div>
+      <div class="stamp-row">
+        <button id="stamp-toggle" class="btn btn-toggle" aria-pressed="false">
+          <span class="stamp-dot"></span> Stamp mode
+        </button>
+      </div>
+    </aside>
+
+    <main class="stage-wrap">
+      <div id="stage-container" class="stage-container"></div>
+
+      <!-- Page navigation, only shown once a multi-page plan is loaded
+           (hidden by default for the common single-page-sheet case). -->
+      <div id="page-nav" class="page-nav hidden">
+        <button id="page-prev-btn" class="round-btn" title="Previous page">‹</button>
+        <span id="page-indicator" class="page-indicator">Page 1 of 1</span>
+        <button id="page-next-btn" class="round-btn" title="Next page">›</button>
+      </div>
+
+      <div class="view-controls">
+        <button id="pencil-toggle-btn" class="round-btn" title="Pencil — freeform drawing" aria-pressed="false">✎</button>
+        <button id="undo-stroke-btn" class="round-btn hidden" title="Undo last stroke">↩</button>
+        <button id="zoom-out-btn" class="round-btn" title="Zoom out">−</button>
+        <button id="fit-btn" class="round-btn round-btn-wide" title="Fit to screen">Fit</button>
+        <button id="zoom-in-btn" class="round-btn" title="Zoom in">+</button>
+      </div>
+
+      <!-- Color palette for the pencil tool, shown only while it's active.
+           Default color (first swatch) is red, matching the reference markup. -->
+      <div id="pencil-palette" class="pencil-palette hidden"></div>
+
+      <div id="selection-toolbar" class="selection-toolbar hidden">
+        <button id="rotate-left-btn" class="mini-btn" title="Rotate left 15°">⟲</button>
+        <button id="rotate-right-btn" class="mini-btn" title="Rotate right 15°">⟳</button>
+        <button id="delete-btn" class="mini-btn mini-btn-danger" title="Delete">✕</button>
+      </div>
+
+      <!-- Long-press context menu, styled like iOS's native Cut/Copy/Delete
+           edit menu. For a symbol it shows alongside (not instead of) the
+           selection toolbar above; a selected pencil stroke has no toolbar
+           (nothing to rotate) so this is its only long-press affordance.
+           Copy/Cut arm a "paste" — the next tap on the plan drops the
+           copied/cut symbol (preserving its rotation) or line there, same
+           as picking a fresh symbol from the palette.
+           Favorite only applies to a placed symbol (a stroke has no palette
+           definition to favorite), so main.js hides it whenever a stroke is
+           selected instead of a symbol. Unlike Cut/Copy/Delete it's a
+           toggle, not a one-shot action, so tapping it updates its own label
+           in place rather than closing the menu. -->
+      <div id="context-menu" class="context-menu hidden">
+        <button id="ctx-favorite-btn" class="context-menu-btn context-menu-btn-favorite">☆ Favorite</button>
+        <button id="ctx-cut-btn" class="context-menu-btn">Cut</button>
+        <button id="ctx-copy-btn" class="context-menu-btn">Copy</button>
+        <button id="ctx-delete-btn" class="context-menu-btn context-menu-btn-danger">Delete</button>
+      </div>
+
+      <!-- Shown when holding on the plan after a Copy/Cut, instead of
+           placing immediately (a quick tap still places right away). Tapping
+           this places the copy and keeps the paste armed, so holding again
+           elsewhere brings it back up for another placement. -->
+      <button id="paste-pill" class="paste-pill hidden">Paste</button>
+    </main>
+
+    <aside id="legend-panel" class="legend-panel">
+      <div id="legend-container"></div>
+      <div class="export-row">
+        <button id="export-pdf-btn" class="btn btn-primary">Export PDF</button>
+        <button id="export-csv-btn" class="btn btn-ghost">Export CSV</button>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<!-- Small transient status badge for service-worker / offline-readiness
+     events. This exists mainly because there's no dev console available on
+     an iPad to check "did the offline cache actually finish installing" —
+     watch for "Offline ready" here after a fresh install, BEFORE trusting
+     Airplane Mode / Add to Home Screen to work. See registerServiceWorker()
+     in src/main.js. -->
+<div id="sw-toast" class="sw-toast hidden"></div>
+
+<!-- Persistent (does not auto-hide) offline-readiness indicator, always in
+     the corner on both the upload screen and the editor screen. The toast
+     above is easy to miss — it only shows once, briefly, right after a
+     load. This stays put so you can check it at any moment, in any
+     browsing context (a plain Safari tab vs a Home Screen icon), which
+     matters because those two can end up with DIFFERENT offline-readiness
+     states on iOS even for the exact same site. Tap it to force a re-check. -->
+<button id="offline-indicator" class="offline-indicator" title="Tap to re-check offline readiness and look for an update">Offline: checking…</button>
+
+<script src="./vendor/pdf-lib.min.js"></script>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
