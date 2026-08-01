@@ -26,6 +26,8 @@ function loadRaw() {
     const parsed = JSON.parse(raw);
     if (!parsed || !Array.isArray(parsed.categories) || typeof parsed.symbolCategory !== 'object') return null;
     if (!Array.isArray(parsed.favorites)) parsed.favorites = [];
+    if (!Array.isArray(parsed.hidden)) parsed.hidden = [];
+    if (!Array.isArray(parsed.collapsed)) parsed.collapsed = [];
     return parsed;
   } catch (_) {
     return null;
@@ -46,6 +48,16 @@ function defaultState() {
     categories: CATEGORIES.map((c) => ({ ...c })),
     symbolCategory: Object.fromEntries(SYMBOLS.map((s) => [s.id, s.category])),
     favorites: [],
+    // Soft-delete: hidden symbols never disappear from symbols.js itself (it's
+    // shipped/static data), they just stop showing up in normal palette
+    // browsing. Reversible on purpose -- Organize mode still surfaces a
+    // hidden symbol (dimmed, with a Restore button) so "delete" can't
+    // permanently lose access to part of the NFPA library by accident.
+    hidden: [],
+    // Which section headings (a real category id, or '__favorites__') are
+    // currently collapsed in the palette. Persisted like everything else
+    // here so a long, mostly-collapsed list stays that way across reloads.
+    collapsed: [],
   };
 }
 
@@ -79,6 +91,24 @@ function ensureFallbackCategory() {
       changed = true;
     }
   }
+  // Prune any hidden id that no longer corresponds to a real symbol (only
+  // matters if a future library update ever removes an entry outright).
+  const validIds = new Set(SYMBOLS.map((s) => s.id));
+  const prunedHidden = state.hidden.filter((id) => validIds.has(id));
+  if (prunedHidden.length !== state.hidden.length) {
+    state.hidden = prunedHidden;
+    changed = true;
+  }
+  // Same for collapsed section ids: a category that's since been deleted
+  // (deleteCategory already prunes its own id, but this guards against any
+  // other way a stale id could linger, e.g. an interrupted write) shouldn't
+  // pile up in storage forever. '__favorites__' is always valid.
+  const validSectionIds = new Set([...state.categories.map((c) => c.id), '__favorites__']);
+  const prunedCollapsed = state.collapsed.filter((id) => validSectionIds.has(id));
+  if (prunedCollapsed.length !== state.collapsed.length) {
+    state.collapsed = prunedCollapsed;
+    changed = true;
+  }
   if (changed) saveRaw(state);
 })();
 
@@ -108,6 +138,40 @@ export function toggleFavorite(defId) {
   const i = state.favorites.indexOf(defId);
   if (i === -1) state.favorites.push(defId);
   else state.favorites.splice(i, 1);
+  persist();
+}
+
+export function isHidden(defId) {
+  return state.hidden.includes(defId);
+}
+
+// "Delete" a symbol from the palette. Deliberately non-destructive: it just
+// stops appearing in normal browsing/search (and therefore in Favorites too,
+// since that's a filtered view of the same symbols) -- nothing is removed
+// from symbols.js, and anything already placed on a plan keeps rendering and
+// exporting normally, since placed instances look symbols up by id directly
+// rather than through this filtered list. See unhideSymbol to bring it back.
+export function hideSymbol(defId) {
+  if (!state.hidden.includes(defId)) state.hidden.push(defId);
+  persist();
+}
+
+export function unhideSymbol(defId) {
+  const i = state.hidden.indexOf(defId);
+  if (i === -1) return;
+  state.hidden.splice(i, 1);
+  persist();
+}
+
+// sectionId is a real category id, or the virtual '__favorites__' group.
+export function isCollapsed(sectionId) {
+  return state.collapsed.includes(sectionId);
+}
+
+export function toggleCollapsed(sectionId) {
+  const i = state.collapsed.indexOf(sectionId);
+  if (i === -1) state.collapsed.push(sectionId);
+  else state.collapsed.splice(i, 1);
   persist();
 }
 
@@ -143,6 +207,8 @@ export function deleteCategory(id) {
   for (const defId of Object.keys(state.symbolCategory)) {
     if (state.symbolCategory[defId] === id) state.symbolCategory[defId] = fallback.id;
   }
+  const collapsedIdx = state.collapsed.indexOf(id);
+  if (collapsedIdx !== -1) state.collapsed.splice(collapsedIdx, 1);
   persist();
 }
 
@@ -170,18 +236,25 @@ export function moveCategory(id, direction) {
 // another item's category picker. Normal browsing hides empty categories so
 // day-to-day use isn't cluttered with blank sections. The virtual Favorites
 // group is unaffected -- it never has anywhere to be "created" empty from.
+// opts.includeHidden: also return symbols the user has removed from the
+// palette (see hideSymbol above) -- used by Organize mode so a hidden symbol
+// still shows up (flagged via the returned item's isHidden field) somewhere
+// findable to restore. Normal browsing/search always excludes them.
 export function getGroupedSymbols(query, opts) {
   const includeEmpty = !!(opts && opts.includeEmpty);
+  const includeHidden = !!(opts && opts.includeHidden);
   const q = (query || '').trim().toLowerCase();
   const matches = (s) => !q || s.name.toLowerCase().includes(q) || s.abbr.toLowerCase().includes(q);
+  const visible = (s) => includeHidden || !state.hidden.includes(s.id);
+  const withFlag = (s) => ({ ...s, isHidden: state.hidden.includes(s.id) });
 
   const groups = [];
   if (state.favorites.length > 0) {
-    const items = SYMBOLS.filter((s) => state.favorites.includes(s.id) && matches(s));
+    const items = SYMBOLS.filter((s) => state.favorites.includes(s.id) && matches(s) && visible(s)).map(withFlag);
     if (items.length > 0) groups.push({ id: '__favorites__', label: 'Favorites', isFavorites: true, items });
   }
   for (const cat of state.categories) {
-    const items = SYMBOLS.filter((s) => state.symbolCategory[s.id] === cat.id && matches(s));
+    const items = SYMBOLS.filter((s) => state.symbolCategory[s.id] === cat.id && matches(s) && visible(s)).map(withFlag);
     if (items.length > 0 || includeEmpty) groups.push({ id: cat.id, label: cat.label, isFavorites: false, items });
   }
   return groups;

@@ -211,6 +211,9 @@ input, textarea {
 }
 
 .palette-section-heading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -221,6 +224,40 @@ input, textarea {
 .palette-section:first-child .palette-section-heading { margin-top: 0; }
 .palette-section-favorites .palette-section-heading { color: #b45309; }
 
+/* Collapse/expand toggle -- always present, in both normal browsing and
+   Organize mode, so a long category list can be tucked away without losing
+   access to rename/move/delete. A symbol matching an active search always
+   renders regardless of its category's saved collapsed state (see
+   _renderList in palette.js), so collapsing something never hides it from a
+   search result you're actively looking for. */
+.palette-section-toggle {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  margin: -3px 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: 10px;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+}
+.palette-section-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.palette-section-count {
+  flex: 0 0 auto;
+  font-weight: 600;
+  color: var(--muted);
+  opacity: 0.7;
+}
+
 /* Organize mode: a category heading turns into a small inline edit row
    (rename input + move up/down + delete) instead of plain text. Deliberately
    NOT window.prompt()/confirm() for renaming -- an inline input is more
@@ -229,6 +266,8 @@ input, textarea {
   display: flex;
   align-items: center;
   gap: 4px;
+  flex: 1;
+  min-width: 0;
 }
 .palette-category-name-input {
   flex: 1;
@@ -347,6 +386,38 @@ input, textarea {
   cursor: pointer;
 }
 .palette-item-star.active { color: #f59e0b; }
+/* Only present in Organize mode, and only ever visible for a symbol that's
+   currently hidden from normal browsing -- see hideSymbol in
+   symbolPrefs.js. Dimmed + a diagonal strike through the icon so a hidden
+   item still reads clearly as "removed" even at a glance while scanning a
+   category to restore something. */
+.palette-item-hidden { opacity: 0.5; }
+.palette-item-hidden .palette-item-icon { position: relative; }
+.palette-item-hidden .palette-item-icon::after {
+  content: '';
+  position: absolute;
+  left: -2px;
+  right: -2px;
+  top: 50%;
+  border-top: 2px solid var(--danger);
+  transform: rotate(-12deg);
+}
+.palette-item-remove-btn {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  font-size: 9.5px;
+  font-weight: 600;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 3px 2px;
+  background: transparent;
+  color: var(--danger);
+  cursor: pointer;
+}
+.palette-item-remove-btn:active { background: rgba(220, 38, 38, 0.08); }
+.palette-item-remove-btn-restore { color: var(--accent); }
+.palette-item-remove-btn-restore:active { background: rgba(14, 165, 233, 0.08); }
 .palette-item-category-select {
   display: block;
   width: 100%;

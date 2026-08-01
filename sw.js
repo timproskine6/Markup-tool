@@ -15,7 +15,7 @@
 // actually running* — install a fresh cache under the new name, and activate
 // cleans up the old one. Forgetting the bump means the browser may keep
 // serving the old cache indefinitely, same staleness trap as before.
-const CACHE_VERSION = 'v12';
+const CACHE_VERSION = 'v14';
 const CACHE_NAME = `sprinkler-markup-${CACHE_VERSION}`;
 
 // Every file the app needs to boot and run fully offline. If you add a new

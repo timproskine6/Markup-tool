@@ -65,28 +65,69 @@ export class Palette {
 
   _renderList() {
     this._listWrap.innerHTML = '';
-    const groups = prefs.getGroupedSymbols(this.query, { includeEmpty: this.organizing });
+    const groups = prefs.getGroupedSymbols(this.query, { includeEmpty: this.organizing, includeHidden: this.organizing });
+
+    // While actively searching, a collapsed section still shows any of its
+    // matches -- collapsing something should never make it unfindable, it
+    // should just stay out of the way during ordinary browsing.
+    const isSearching = !!this.query.trim();
 
     for (const group of groups) {
+      const collapsed = !isSearching && prefs.isCollapsed(group.id);
+
       const section = document.createElement('div');
-      section.className = 'palette-section' + (group.isFavorites ? ' palette-section-favorites' : '');
+      section.className = 'palette-section'
+        + (group.isFavorites ? ' palette-section-favorites' : '')
+        + (collapsed ? ' palette-section-collapsed' : '');
       section.dataset.categoryId = group.id;
 
       const heading = document.createElement('div');
       heading.className = 'palette-section-heading';
+
+      const toggleCollapse = () => {
+        prefs.toggleCollapsed(group.id);
+        this._renderList();
+      };
+
+      const toggleBtn = document.createElement('button');
+      toggleBtn.type = 'button';
+      toggleBtn.className = 'palette-section-toggle';
+      toggleBtn.textContent = collapsed ? '▸' : '▾';
+      toggleBtn.title = collapsed ? 'Expand' : 'Collapse';
+      toggleBtn.setAttribute('aria-expanded', String(!collapsed));
+      toggleBtn.addEventListener('click', toggleCollapse);
+      heading.appendChild(toggleBtn);
+
       if (this.organizing && !group.isFavorites) {
+        // The category editor (rename/move/delete) owns this row's clicks
+        // while organizing, so the label itself isn't also a toggle target
+        // here -- the chevron button above still works.
         heading.appendChild(this._buildCategoryEditor(group));
       } else {
-        heading.textContent = (group.isFavorites ? '★ ' : '') + group.label;
+        const label = document.createElement('span');
+        label.className = 'palette-section-label';
+        label.textContent = (group.isFavorites ? '★ ' : '') + group.label;
+        label.addEventListener('click', toggleCollapse); // bigger, easier tap target than just the chevron
+        heading.appendChild(label);
       }
+
+      if (!this.organizing) {
+        const count = document.createElement('span');
+        count.className = 'palette-section-count';
+        count.textContent = String(group.items.length);
+        heading.appendChild(count);
+      }
+
       section.appendChild(heading);
 
-      const grid = document.createElement('div');
-      grid.className = 'palette-grid';
-      for (const sym of group.items) {
-        grid.appendChild(this._buildItem(sym, group));
+      if (!collapsed) {
+        const grid = document.createElement('div');
+        grid.className = 'palette-grid';
+        for (const sym of group.items) {
+          grid.appendChild(this._buildItem(sym, group));
+        }
+        section.appendChild(grid);
       }
-      section.appendChild(grid);
       this._listWrap.appendChild(section);
     }
 
@@ -208,7 +249,7 @@ export class Palette {
 
   _buildItem(sym, group) {
     const item = document.createElement('div');
-    item.className = 'palette-item' + (this.armedId === sym.id ? ' armed' : '');
+    item.className = 'palette-item' + (this.armedId === sym.id ? ' armed' : '') + (sym.isHidden ? ' palette-item-hidden' : '');
     item.dataset.symbolId = sym.id;
 
     const main = document.createElement('button');
@@ -242,6 +283,21 @@ export class Palette {
     item.appendChild(star);
 
     if (this.organizing) {
+      // Removing is a soft-delete (see hideSymbol in symbolPrefs.js) --
+      // deliberately no confirm() here, unlike delete-category, since it's
+      // trivially reversible right from this same screen via Restore.
+      const removeBtn = document.createElement('button');
+      removeBtn.type = 'button';
+      removeBtn.className = 'palette-item-remove-btn' + (sym.isHidden ? ' palette-item-remove-btn-restore' : '');
+      removeBtn.textContent = sym.isHidden ? 'Restore' : 'Remove';
+      removeBtn.title = sym.isHidden ? 'Add this symbol back to the palette' : 'Remove this symbol from the palette (you can restore it later)';
+      removeBtn.addEventListener('click', () => {
+        if (sym.isHidden) prefs.unhideSymbol(sym.id);
+        else prefs.hideSymbol(sym.id);
+        this._renderList();
+      });
+      item.appendChild(removeBtn);
+
       const currentCat = group.isFavorites ? prefs.getSymbolCategory(sym.id) : group.id;
       const select = document.createElement('select');
       select.className = 'palette-item-category-select';
