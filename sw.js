@@ -9,13 +9,16 @@
 // Screen" gives you a fully working app with zero network access — no need
 // to keep a-Shell's local server running just to use it day to day.
 //
-// THE ONE RULE FOR SHIPPING AN UPDATE: bump CACHE_VERSION below. That's what
-// changes this file's bytes, which is what makes the browser notice there's
-// something new next time it revisits this origin *while the server is
-// actually running* — install a fresh cache under the new name, and activate
-// cleans up the old one. Forgetting the bump means the browser may keep
-// serving the old cache indefinitely, same staleness trap as before.
-const CACHE_VERSION = 'v14';
+// THE ONE RULE FOR SHIPPING AN UPDATE: bump CACHE_VERSION below, AND bump
+// APP_VERSION in src/main.js to the exact same string. The two used to be
+// one rule (just this file), but main.js now compares its own baked-in
+// APP_VERSION against the active cache name to detect "a new version
+// finished installing in the background, but this open tab hasn't reloaded
+// to actually run it yet" — see the APP_VERSION comment in main.js for why
+// that distinction matters. If these two values ever drift apart by
+// accident, the symptom is a tab permanently showing itself a "there's an
+// update, tap to reload" prompt even right after reloading.
+const CACHE_VERSION = 'v15';
 const CACHE_NAME = `sprinkler-markup-${CACHE_VERSION}`;
 
 // Every file the app needs to boot and run fully offline. If you add a new

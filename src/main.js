@@ -9,6 +9,21 @@ import * as symbolPrefs from './symbolPrefs.js';
 
 const CURRENT_PROJECT_ID = 'current'; // Phase 1: single active project, autosaved on-device.
 
+// Baked-in version identifier for the JS THIS PAGE is currently running --
+// deliberately separate from Cache Storage's list of cache names. Those two
+// can disagree: a service worker can finish installing (and even activating
+// + deleting old caches) entirely in the background while an already-open
+// tab keeps executing the OLD main.js/palette.js it loaded at last
+// navigation, since only an actual reload re-fetches and re-runs page JS.
+// checkOfflineReadiness() below compares this against the active cache's
+// name to tell "a new version is ready" apart from "this page is already
+// running it" -- without that, the on-screen version badge could report
+// e.g. "(v14)" the instant the new cache exists, even on a tab that's still
+// showing v13's UI, which is exactly as confusing as having no badge at all.
+// MUST be bumped in lockstep with CACHE_VERSION in sw.js -- see the ONE RULE
+// comment there.
+const APP_VERSION = 'v15';
+
 const el = {
   uploadScreen: document.getElementById('upload-screen'),
   editorScreen: document.getElementById('editor-screen'),
@@ -656,8 +671,21 @@ async function checkOfflineReadiness() {
       // this against CACHE_VERSION in sw.js to know if a reload actually
       // picked up the latest push yet.
       const versionSuffix = ourCacheName ? ourCacheName.replace('sprinkler-markup-', '') : '';
-      el.offlineIndicator.textContent = `Offline: ready ✓${versionSuffix ? ' (' + versionSuffix + ')' : ''}`;
+      const staleTab = versionSuffix && versionSuffix !== APP_VERSION;
+      el.offlineIndicator.textContent = staleTab
+        ? `Offline: ready ✓ (${versionSuffix} installed, this tab is still ${APP_VERSION})`
+        : `Offline: ready ✓${versionSuffix ? ' (' + versionSuffix + ')' : ''}`;
       el.offlineIndicator.classList.add('offline-indicator-ready');
+      // A newer cache exists than what THIS tab is actually running -- this
+      // happens when the update finished installing in the background (see
+      // watchForUpdate) while this tab sat open unattended, so the sticky
+      // "updatefound" listener's toast either already scrolled past or never
+      // got noticed. Surface it again right now, on every manual re-check,
+      // rather than leaving someone staring at a "ready ✓" badge that quietly
+      // means "ready, but not for you yet."
+      if (staleTab) {
+        showSwToast('Update installed — tap to reload', { sticky: true, onClick: () => location.reload() });
+      }
     } else if (hasShell && !controlled) {
       el.offlineIndicator.textContent = 'Offline: cached, reload to activate';
       el.offlineIndicator.classList.add('offline-indicator-bad');
