@@ -1,0 +1,813 @@
+:root {
+  --bg: #0f172a;
+  --panel-bg: #ffffff;
+  --ink: #0f172a;
+  --muted: #64748b;
+  --border: #e2e8f0;
+  --accent: #0ea5e9;
+  --accent-ink: #ffffff;
+  --danger: #dc2626;
+  --topbar-h: 52px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+  overscroll-behavior: none;
+  background: #f1f5f9;
+  color: var(--ink);
+  /* Applied earlier to just the PDF canvas area to stop iOS Safari's native
+     long-press callout (Copy / Find Selection / Look Up / Translate) from
+     winning the race against our own long-press menu there. Turns out any
+     button with text content — the pencil toggle, zoom buttons, etc. — is
+     just as vulnerable: a press that lands slightly long gets read as
+     "select this text" instead of a tap, and the click handler never fires.
+     Applying it app-wide (and explicitly re-enabling normal text selection
+     on the few real text inputs below) closes that off everywhere at once
+     instead of chasing it toolbar by toolbar. */
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+input, textarea {
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
+}
+
+.hidden { display: none !important; }
+
+/* ---------- Upload screen ---------- */
+
+#upload-screen {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: radial-gradient(circle at top, #1e293b, #0f172a 60%);
+}
+
+.upload-card {
+  max-width: 460px;
+  width: 100%;
+  text-align: center;
+  color: #f8fafc;
+}
+
+.upload-card h1 {
+  font-size: 24px;
+  margin-bottom: 8px;
+}
+
+.subtitle {
+  color: #94a3b8;
+  margin-bottom: 24px;
+  line-height: 1.5;
+}
+
+.drop-zone {
+  border: 2px dashed #475569;
+  border-radius: 16px;
+  padding: 48px 24px;
+  color: #cbd5e1;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.drop-zone.dragover, .drop-zone:hover {
+  border-color: var(--accent);
+  background: rgba(14, 165, 233, 0.08);
+}
+
+/* ---------- Editor shell ---------- */
+
+#editor-screen {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.topbar {
+  height: var(--topbar-h);
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  background: var(--bg);
+  color: #fff;
+  border-bottom: 1px solid #1e293b;
+}
+
+.project-name-input {
+  background: transparent;
+  border: 1px solid transparent;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+  padding: 6px 8px;
+  border-radius: 6px;
+  max-width: 220px;
+}
+.project-name-input:hover, .project-name-input:focus {
+  border-color: #334155;
+  outline: none;
+}
+
+.topbar-spacer { flex: 1; }
+
+.save-status {
+  font-size: 12px;
+  color: #94a3b8;
+  white-space: nowrap;
+}
+
+.btn {
+  border: none;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.btn-ghost {
+  background: #1e293b;
+  color: #e2e8f0;
+}
+.btn-ghost:hover { background: #334155; }
+.btn-primary {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+.btn-primary:disabled { opacity: 0.6; }
+
+.icon-only-mobile { display: none; font-size: 16px; }
+
+.body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  position: relative;
+}
+
+/* ---------- Palette (left) ---------- */
+
+.palette-panel {
+  width: 240px;
+  flex: 0 0 auto;
+  background: var(--panel-bg);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+#palette-container {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px;
+}
+
+.palette-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.palette-search input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.palette-organize-btn {
+  flex: 0 0 auto;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.palette-organize-btn.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+.palette-section-heading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin: 12px 0 6px;
+  font-weight: 700;
+}
+.palette-section:first-child .palette-section-heading { margin-top: 0; }
+.palette-section-favorites .palette-section-heading { color: #b45309; }
+
+/* Collapse/expand toggle -- always present, in both normal browsing and
+   Organize mode, so a long category list can be tucked away without losing
+   access to rename/move/delete. A symbol matching an active search always
+   renders regardless of its category's saved collapsed state (see
+   _renderList in palette.js), so collapsing something never hides it from a
+   search result you're actively looking for. */
+.palette-section-toggle {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  margin: -3px 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: 10px;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+}
+.palette-section-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.palette-section-count {
+  flex: 0 0 auto;
+  font-weight: 600;
+  color: var(--muted);
+  opacity: 0.7;
+}
+
+/* Organize mode: a category heading turns into a small inline edit row
+   (rename input + move up/down + delete) instead of plain text. Deliberately
+   NOT window.prompt()/confirm() for renaming -- an inline input is more
+   reliable across iOS standalone-PWA quirks and just as fast to use. */
+.palette-category-editor {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+.palette-category-name-input {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 5px;
+  background: #fff;
+}
+.palette-category-btn {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 6px;
+  background: #f1f5f9;
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+.palette-category-btn:disabled { opacity: 0.35; cursor: default; }
+.palette-category-btn-danger { color: var(--danger); }
+.palette-category-btn-confirm { width: auto; padding: 0 8px; background: var(--accent); color: #fff; }
+
+.palette-add-category-form {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 8px;
+}
+.palette-add-category-input {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+.palette-add-category-btn {
+  width: 100%;
+  margin-top: 8px;
+  padding: 8px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--accent);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.palette-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+/* .palette-item is a plain (non-button) card wrapper -- its tap target for
+   arming is the nested .palette-item-main button, kept as a SEPARATE
+   sibling element (not nested inside another button) alongside the star
+   toggle and (in organize mode) the category picker, since a <button>
+   cannot validly contain other interactive controls. */
+.palette-item {
+  position: relative;
+  border: 1px solid var(--border);
+  background: #fff;
+  border-radius: 10px;
+  padding: 8px 4px 6px;
+  text-align: center;
+}
+.palette-item:hover { border-color: var(--accent); }
+.palette-item.armed {
+  border-color: var(--accent);
+  background: rgba(14, 165, 233, 0.08);
+  box-shadow: 0 0 0 2px rgba(14, 165, 233, 0.25);
+}
+.palette-item-main {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+}
+.palette-item-icon { width: 28px; height: 28px; }
+.palette-item-icon svg { width: 100%; height: 100%; }
+.palette-item-label {
+  font-size: 10.5px;
+  line-height: 1.2;
+  color: var(--ink);
+}
+.palette-item-abbr {
+  font-size: 9px;
+  color: var(--muted);
+  font-weight: 700;
+}
+.palette-item-star {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  border: none;
+  background: transparent;
+  color: #cbd5e1;
+  font-size: 15px;
+  line-height: 1;
+  padding: 3px;
+  cursor: pointer;
+}
+.palette-item-star.active { color: #f59e0b; }
+/* Only present in Organize mode, and only ever visible for a symbol that's
+   currently hidden from normal browsing -- see hideSymbol in
+   symbolPrefs.js. Dimmed + a diagonal strike through the icon so a hidden
+   item still reads clearly as "removed" even at a glance while scanning a
+   category to restore something. */
+.palette-item-hidden { opacity: 0.5; }
+.palette-item-hidden .palette-item-icon { position: relative; }
+.palette-item-hidden .palette-item-icon::after {
+  content: '';
+  position: absolute;
+  left: -2px;
+  right: -2px;
+  top: 50%;
+  border-top: 2px solid var(--danger);
+  transform: rotate(-12deg);
+}
+.palette-item-remove-btn {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  font-size: 9.5px;
+  font-weight: 600;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 3px 2px;
+  background: transparent;
+  color: var(--danger);
+  cursor: pointer;
+}
+.palette-item-remove-btn:active { background: rgba(220, 38, 38, 0.08); }
+.palette-item-remove-btn-restore { color: var(--accent); }
+.palette-item-remove-btn-restore:active { background: rgba(14, 165, 233, 0.08); }
+.palette-item-category-select {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  font-size: 9.5px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 2px;
+  background: #fff;
+  color: var(--ink);
+}
+.palette-empty { color: var(--muted); font-size: 13px; padding: 12px 4px; }
+
+.stamp-row {
+  padding: 10px;
+  border-top: 1px solid var(--border);
+}
+.btn-toggle {
+  width: 100%;
+  background: #f1f5f9;
+  color: var(--ink);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.stamp-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: #cbd5e1;
+  display: inline-block;
+}
+.btn-toggle.active {
+  background: #0ea5e9;
+  color: #fff;
+}
+.btn-toggle.active .stamp-dot { background: #fff; }
+
+/* ---------- Stage (center) ---------- */
+
+.stage-wrap {
+  flex: 1;
+  position: relative;
+  min-width: 0;
+  background: #64748b;
+}
+
+.stage-container {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  /* iOS Safari has its own long-press gesture (the "Copy / Look Up /
+     Translate" callout) that fires on any element by default, independent
+     of touch-action. Without suppressing it here, it wins the race against
+     our own JS-timer-driven long-press and shows instead of our Cut/Copy/
+     Delete menu. -webkit-touch-callout: none turns that off; the
+     user-select rules stop the press from also starting a text/element
+     selection underneath it. */
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.stage-canvas {
+  position: absolute;
+  top: 0; left: 0;
+  /* Belt-and-suspenders with .stage-container above: apply directly to the
+     canvases too, in case the callout gesture is being resolved against the
+     canvas element itself rather than inheriting suppression from its
+     parent. */
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.stage-canvas-overlay { touch-action: none; }
+
+.view-controls {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  display: flex;
+  gap: 6px;
+  background: rgba(15, 23, 42, 0.7);
+  padding: 6px;
+  border-radius: 12px;
+}
+.round-btn {
+  width: 36px; height: 36px;
+  border-radius: 8px;
+  border: none;
+  background: #1e293b;
+  color: #fff;
+  font-size: 18px;
+  cursor: pointer;
+}
+.round-btn-wide { width: auto; padding: 0 10px; font-size: 12px; font-weight: 700; }
+.round-btn:active { background: #334155; }
+.round-btn.active { background: var(--accent); }
+
+.page-nav {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(15, 23, 42, 0.7);
+  padding: 6px 10px;
+  border-radius: 12px;
+  z-index: 6;
+}
+.page-nav .round-btn { width: 30px; height: 30px; font-size: 17px; }
+.page-nav .round-btn:disabled { opacity: 0.35; }
+.page-indicator {
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.pencil-palette {
+  position: absolute;
+  right: 12px;
+  bottom: 58px;
+  display: flex;
+  gap: 6px;
+  background: rgba(15, 23, 42, 0.85);
+  padding: 8px;
+  border-radius: 10px;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.3);
+  z-index: 6;
+}
+.color-swatch {
+  width: 26px; height: 26px;
+  border-radius: 50%;
+  padding: 0;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  cursor: pointer;
+}
+.color-swatch.active {
+  border-color: #fff;
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.find-place-panel {
+  position: absolute;
+  right: 12px;
+  bottom: 58px;
+  width: 240px;
+  max-width: calc(100vw - 24px);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: rgba(15, 23, 42, 0.92);
+  padding: 12px;
+  border-radius: 10px;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.3);
+  z-index: 6;
+  color: #fff;
+}
+.find-place-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #94a3b8; }
+.find-place-input {
+  font-size: 14px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
+.find-place-input::placeholder { color: #94a3b8; }
+.find-place-scope {
+  display: flex;
+  gap: 14px;
+  font-size: 12.5px;
+  color: #cbd5e1;
+}
+.find-place-scope label { display: flex; align-items: center; gap: 5px; }
+.find-place-run-btn { width: 100%; }
+.find-place-status {
+  font-size: 12px;
+  color: #cbd5e1;
+  line-height: 1.4;
+  min-height: 1em;
+}
+.find-place-status.find-place-status-error { color: #fca5a5; }
+
+.selection-toolbar {
+  position: absolute;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: #0f172a;
+  padding: 6px;
+  border-radius: 10px;
+  box-shadow: 0 6px 16px rgba(0,0,0,0.3);
+  z-index: 5;
+}
+.mini-btn {
+  width: 32px; height: 32px;
+  border-radius: 6px;
+  border: none;
+  background: #1e293b;
+  color: #fff;
+  font-size: 15px;
+  cursor: pointer;
+}
+.mini-btn-danger { background: var(--danger); }
+
+/* Long-press context menu — deliberately styled like iOS's native
+   Cut/Copy/Delete edit menu (light pill, hairline dividers, red danger
+   text), distinct from the app's own dark toolbar chrome above it. */
+.context-menu {
+  position: absolute;
+  transform: translate(-50%, -100%);
+  display: flex;
+  background: rgba(247, 247, 248, 0.98);
+  border-radius: 10px;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.28);
+  overflow: hidden;
+  z-index: 6;
+}
+.context-menu-btn {
+  border: none;
+  border-right: 1px solid rgba(60, 60, 67, 0.2);
+  background: transparent;
+  padding: 10px 16px;
+  font-size: 15px;
+  color: #1c1c1e;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.context-menu-btn:last-child { border-right: none; }
+.context-menu-btn:active { background: rgba(60, 60, 67, 0.1); }
+.context-menu-btn-danger { color: var(--danger); }
+.context-menu-btn-favorite.active { color: #b45309; font-weight: 600; }
+
+/* Paste pill — styled like iOS's own blue paste bubble, so it reads as
+   "tap to confirm" at a glance the same way the native gesture does. */
+.paste-pill {
+  position: absolute;
+  transform: translate(-50%, -100%);
+  border: none;
+  border-radius: 16px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 8px 18px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+  z-index: 7;
+  cursor: pointer;
+}
+.paste-pill:active { background: #0284c7; }
+
+/* ---------- Legend (right) ---------- */
+
+.legend-panel {
+  width: 260px;
+  flex: 0 0 auto;
+  background: var(--panel-bg);
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+#legend-container {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+}
+.legend-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-weight: 700;
+  margin-bottom: 10px;
+}
+.legend-total {
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 600;
+}
+.legend-empty { color: var(--muted); font-size: 13px; }
+.legend-divider { height: 1px; background: var(--border); margin: 16px 0; }
+.legend-table { width: 100%; border-collapse: collapse; }
+.legend-table td { padding: 6px 4px; border-bottom: 1px solid #f1f5f9; vertical-align: middle; }
+.legend-icon { width: 24px; }
+.legend-icon svg { width: 20px; height: 20px; display: block; }
+.legend-name {
+  font-size: 12.5px;
+  display: flex;
+  flex-direction: column;
+}
+.legend-abbr { font-size: 10px; color: var(--muted); font-weight: 600; }
+.legend-count {
+  text-align: right;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.export-row {
+  padding: 10px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  gap: 8px;
+}
+.export-row .btn { flex: 1; }
+
+.panel-scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.4);
+  z-index: 9;
+}
+
+/* Transient offline-readiness / service-worker status badge — see the
+   comment above #sw-toast in index.html for why this exists. */
+.sw-toast {
+  position: fixed;
+  top: max(10px, env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  background: var(--ink);
+  color: #fff;
+  padding: 8px 16px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 500;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+  transition: opacity 0.3s ease;
+  pointer-events: none;
+  max-width: 90vw;
+  text-align: center;
+}
+.sw-toast.hidden { display: none; }
+.sw-toast-error { background: var(--danger); }
+/* Sticky "an update installed — tap to reload" variant: unlike the normal
+   passive status toast (pointer-events: none, since it's just informational
+   and auto-hides), this one is a real tappable action, so it needs its own
+   affordance -- accent color + an underline instead of the neutral dark
+   pill, and pointer-events re-enabled just for this variant. */
+.sw-toast-clickable {
+  pointer-events: auto;
+  cursor: pointer;
+  background: var(--accent);
+  text-decoration: underline;
+}
+
+/* Persistent offline-readiness indicator — see the comment above
+   #offline-indicator in index.html. Deliberately small/muted, tucked just
+   under the topbar on the right, low-contrast so it doesn't compete for
+   attention day-to-day, but always present so it can be checked on demand.
+   Specifically NOT bottom-right: that's where the legend panel's Export
+   CSV/PDF buttons live, and a fixed-position element there would sit on
+   top of them and steal taps. Also clear of the bottom-left page-nav and
+   the top-center sw-toast. */
+.offline-indicator {
+  position: fixed;
+  right: max(10px, env(safe-area-inset-right));
+  top: calc(var(--topbar-h) + max(8px, env(safe-area-inset-top)));
+  z-index: 20;
+  border: none;
+  background: rgba(15, 23, 42, 0.75);
+  color: #cbd5e1;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+}
+.offline-indicator:active { background: rgba(15, 23, 42, 0.9); }
+.offline-indicator-ready { color: #86efac; }
+.offline-indicator-bad { color: #fca5a5; }
+
+/* ---------- Responsive: iPad portrait / phones ---------- */
+
+@media (max-width: 900px) {
+  .icon-only-mobile { display: inline-flex; }
+
+  .palette-panel, .legend-panel {
+    position: absolute;
+    top: 0; bottom: 0;
+    width: min(82vw, 300px);
+    z-index: 10;
+    box-shadow: 0 0 24px rgba(0,0,0,0.25);
+    transform: translateX(-105%);
+    transition: transform 0.2s ease;
+  }
+  .palette-panel { left: 0; }
+  .legend-panel { right: 0; transform: translateX(105%); }
+  .palette-panel.open, .legend-panel.open { transform: translateX(0); }
+}
