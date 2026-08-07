@@ -40,7 +40,9 @@
 import { SYMBOL_SIZE_PDF_PTS } from './stage.js';
 
 const PLACEMENT_GAP_PDF_PTS = SYMBOL_SIZE_PDF_PTS / 2 + 3; // same "small visible gap above" convention as textSearch.js
-const MAX_SCAN_PIXELS = 1900; // cap the long side of the whole-page scan raster -- keeps the coarse pass fast on a big sheet
+const MAX_SCAN_PIXELS = 1900; // floor for the whole-page scan raster's long side on a small/medium sheet -- same "protect the device" spirit as pdfViewer.js's MAX_INITIAL_PIXELS
+const TEMPLATE_TARGET_PX = 64; // the snipped template's SHORTER side should render at least this many pixels, or its own fine detail (a thin prong, a small letter) gets lost before matching even starts
+const MAX_SCAN_MEGAPIXELS = 16; // hard ceiling on the whole-page raster regardless of template size -- keeps a huge full-size architectural sheet (a real 30x42in E-size plot is common) from blowing up memory/CPU on an iPad
 const INK_LUMINANCE_THRESHOLD = 210; // below this (out of 255) counts as "ink", matches non-white/near-white paper
 const COARSE_DOWNSAMPLE = 4; // block-average factor for the cheap first pass
 const COARSE_SCORE_MIN = 0.58; // lenient -- just enough to shortlist candidates for the expensive refine step (Dice-coefficient scale, see windowScore)
@@ -80,12 +82,33 @@ async function renderFullPageToCanvas(pdfSource, pageNum, scale) {
   return canvas;
 }
 
-// Picks a scan scale (raster px per PDF point) so the page's long side stays
-// under MAX_SCAN_PIXELS, same "protect the device" spirit as pdfViewer.js's
-// MAX_INITIAL_PIXELS.
-function pickScanScale(pageWidthPt, pageHeightPt) {
+// Picks a scan scale (raster px per PDF point). A flat "cap the page's long
+// side" rule (the original approach here) works fine on a normal Letter/A-
+// size reference sheet, but falls apart on a real full-size architectural
+// plot -- Tim's own plans run up to 42x30in (3024x2160 PDF points). Capping
+// the WHOLE PAGE to MAX_SCAN_PIXELS on a sheet that size works out to
+// something like 45 DPI, at which point a small hand-drawn symbol (a few
+// tenths of an inch of actual ink) blurs down into a nearly featureless
+// blob -- indistinguishable from plenty of other unrelated marks on a busy
+// sheet, which is exactly what produced a "too much of the page to search
+// reliably" result on a symbol that was, by eye, perfectly distinctive.
+//
+// So scale is driven by the TEMPLATE first: whatever it takes to get the
+// snipped crop's shorter side up to TEMPLATE_TARGET_PX of real detail. That
+// scale is then clamped to MAX_SCAN_MEGAPIXELS worth of whole-page raster --
+// still a real ceiling, so a huge sheet with a tiny snip doesn't try to
+// allocate an unbounded canvas -- and finally clamped to the original
+// MAX_SCAN_PIXELS-based floor and the existing "never upscale past 4px/pt"
+// ceiling, so a normal-size reference sheet like a NOTIFICATION_DEVICES.pdf
+// (Letter-size) renders exactly as before this fix.
+function pickScanScale(pageWidthPt, pageHeightPt, templateWPt, templateHPt) {
   const longSide = Math.max(pageWidthPt, pageHeightPt);
-  return Math.min(MAX_SCAN_PIXELS / longSide, 4); // never upscale past 4px/pt even on a small sheet -- plenty of detail, keeps memory bounded
+  const floorScale = MAX_SCAN_PIXELS / longSide;
+  const detailScale = templateWPt > 0 && templateHPt > 0
+    ? TEMPLATE_TARGET_PX / Math.max(1, Math.min(templateWPt, templateHPt))
+    : floorScale;
+  const memoryBudgetScale = Math.sqrt((MAX_SCAN_MEGAPIXELS * 1e6) / Math.max(1, pageWidthPt * pageHeightPt));
+  return Math.min(Math.max(detailScale, floorScale), memoryBudgetScale, 4); // never upscale past 4px/pt even on a small sheet -- plenty of detail, keeps memory bounded
 }
 
 function canvasToInkMask(canvas) {
@@ -237,7 +260,7 @@ export async function findPictureMatches(pdfSource, pageNum, template, options =
 
   const page = await pdfSource.pdfDoc.getPage(pageNum);
   const viewport = page.getViewport({ scale: 1 });
-  const scanScale = pickScanScale(viewport.width, viewport.height);
+  const scanScale = pickScanScale(viewport.width, viewport.height, template.pdfRect.w, template.pdfRect.h);
 
   const pageCanvas = await renderFullPageToCanvas(pdfSource, pageNum, scanScale);
   const { mask: pageMask, w: pageW, h: pageH } = canvasToInkMask(pageCanvas);
