@@ -23,7 +23,7 @@ const CURRENT_PROJECT_ID = 'current'; // Phase 1: single active project, autosav
 // showing v13's UI, which is exactly as confusing as having no badge at all.
 // MUST be bumped in lockstep with CACHE_VERSION in sw.js -- see the ONE RULE
 // comment there.
-const APP_VERSION = 'v22';
+const APP_VERSION = 'v23';
 
 const el = {
   uploadScreen: document.getElementById('upload-screen'),

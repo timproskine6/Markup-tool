@@ -6,7 +6,7 @@
 
 import { getSymbolImage, SYMBOLS_BY_ID } from './symbols.js';
 
-const SYMBOL_SIZE_PDF_PTS = 16; // symbol footprint in PDF points -> scales with the plan
+export const SYMBOL_SIZE_PDF_PTS = 16; // symbol footprint in PDF points -> scales with the plan; exported so textSearch.js can offset a Find & Place match to sit clear above a text label instead of centered on top of it
 const MIN_SCALE = 0.05;
 const MAX_SCALE = 12;
 const TAP_MOVE_THRESHOLD = 6; // px — under this, a pointer down+up counts as a tap not a drag
