@@ -53,6 +53,17 @@
     <main class="stage-wrap">
       <div id="stage-container" class="stage-container"></div>
 
+      <!-- Picture search "snip" mode: covers the stage while the user drags
+           out a rectangle around an existing symbol on the plan to search
+           for visually. Hidden/inert unless snip mode is active (toggled via
+           JS, not the "hidden" utility class, so main.js can also flip
+           pointer-events without fighting display:none mid-drag). -->
+      <div id="picture-snip-overlay" class="picture-snip-overlay">
+        <div id="picture-snip-rect" class="picture-snip-rect hidden"></div>
+        <div class="picture-snip-hint">Drag a box around the symbol</div>
+        <button id="picture-snip-cancel-btn" class="round-btn picture-snip-cancel-btn" title="Cancel">✕</button>
+      </div>
+
       <!-- Page navigation, only shown once a multi-page plan is loaded
            (hidden by default for the common single-page-sheet case). -->
       <div id="page-nav" class="page-nav hidden">
@@ -92,6 +103,23 @@
         </div>
         <button id="find-place-run-btn" class="btn btn-primary find-place-run-btn">Find &amp; Place armed symbol</button>
         <div id="find-place-status" class="find-place-status"></div>
+
+        <div class="find-place-divider"></div>
+
+        <!-- Picture search: same auto-place-everywhere behavior as the text
+             search above, but matched by comparing rendered pixels instead
+             of reading the PDF's text layer -- for a repeated icon that was
+             never real selectable text (an existing furniture block, a
+             legacy fire-alarm symbol, anything drawn as artwork rather than
+             a text run). See src/pictureSearch.js. Reuses the "This page /
+             All pages" scope radios above, since only one search runs at a
+             time. -->
+        <button id="picture-snip-btn" class="btn btn-ghost find-place-picture-btn">📷 Snip a symbol</button>
+        <img id="picture-template-preview" class="picture-template-preview hidden" alt="Snipped symbol" />
+        <label class="find-place-rotation-check">
+          <input type="checkbox" id="picture-rotation-check" /> Also check rotated copies
+        </label>
+        <button id="picture-search-run-btn" class="btn btn-primary find-place-run-btn hidden">Find &amp; Place by picture</button>
       </div>
 
       <div id="selection-toolbar" class="selection-toolbar hidden">

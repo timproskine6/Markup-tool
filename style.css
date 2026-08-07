@@ -603,6 +603,80 @@ input, textarea {
 }
 .find-place-status.find-place-status-error { color: #fca5a5; }
 
+.find-place-divider {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.15);
+  margin: 2px 0;
+}
+.find-place-picture-btn {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
+.picture-template-preview {
+  display: block;
+  width: 100%;
+  max-height: 90px;
+  object-fit: contain;
+  background: #fff;
+  border-radius: 8px;
+  padding: 4px;
+}
+.find-place-rotation-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: #cbd5e1;
+}
+
+/* Picture search "snip" overlay — covers the whole stage while dragging out
+   a selection rectangle. Toggled via the .active class (not the .hidden
+   utility) so main.js can flip pointer-events on/off without fighting
+   display:none mid-drag, per the comment above #picture-snip-overlay in
+   index.html. */
+.picture-snip-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  display: none;
+  cursor: crosshair;
+  touch-action: none;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.picture-snip-overlay.active {
+  display: block;
+}
+.picture-snip-hint {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(15, 23, 42, 0.88);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 14px;
+  border-radius: 999px;
+  white-space: nowrap;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+  pointer-events: none;
+}
+.picture-snip-cancel-btn {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  background: rgba(15, 23, 42, 0.88);
+}
+.picture-snip-rect {
+  position: absolute;
+  border: 2px solid var(--accent);
+  background: rgba(14, 165, 233, 0.18);
+  pointer-events: none;
+}
+
 .selection-toolbar {
   position: absolute;
   transform: translateX(-50%);
