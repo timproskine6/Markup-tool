@@ -10,11 +10,36 @@
 // project-wide totals plus a per-page breakdown once there's more than one
 // page) — always, even for a single-page plan, since the small corner box
 // alone isn't meant to stand in for a real legend page.
+//
+// A page with a /Rotate flag (very common on a real full-size architectural
+// sheet -- it's often authored landscape but stored with a portrait
+// MediaBox + Rotate 90/270 so it prints correctly) needs special handling
+// here. symbol.x/y are stored in pdf.js's VIEWPORT space -- the same
+// post-rotation, "as actually displayed" space used everywhere else in this
+// app (Stage, textSearch.js, pictureSearch.js) -- but pdf-lib's own drawing
+// coordinate system is the page's RAW, pre-rotation space, and pdf-lib does
+// NOT automatically account for /Rotate the way pdf.js's viewport does. Left
+// alone, that mismatch is exactly what scattered placed symbols across the
+// page on export: this file was treating viewport-space coordinates as if
+// they were already raw pdf-lib coordinates.
+//
+// The fix wraps everything drawn on a rotated page in a single `cm`
+// (concatTransformationMatrix) operator equal to pdf.js's own inverse
+// viewport transform (derived by sampling viewport.convertToPdfPoint rather
+// than hand-deriving the matrix inverse -- that keeps this exactly in sync
+// with whatever pdf.js itself does, including the sign/direction
+// conventions, instead of a hand-rolled reimplementation that would be easy
+// to get subtly wrong). Once that transform is pushed, every existing
+// drawing call below -- symbols, strokes, the per-page legend box -- keeps
+// working completely unchanged, because "pageWidth/pageHeight" simply
+// becomes the viewport's (post-rotation) dimensions instead of the page's
+// raw MediaBox dimensions. For an unrotated page this transform reduces to
+// the same plain y-flip this file always used, so nothing changes there.
 
 import { SYMBOLS_BY_ID } from './symbols.js';
 import { computeLegend } from './legend.js';
 
-const { PDFDocument, rgb, StandardFonts, degrees } = window.PDFLib;
+const { PDFDocument, rgb, StandardFonts, degrees, pushGraphicsState, popGraphicsState, concatTransformationMatrix } = window.PDFLib;
 
 const SYMBOL_SIZE_PDF_PTS = 16;
 const ICON_RASTER_PX = 128;
@@ -129,13 +154,57 @@ function strokeToPngBytes(stroke, pageHeight) {
   return { bytes, x: minX, y: minY, width: widthPts, height: heightPts };
 }
 
-function drawRotatedImageCentered(page, image, cx, cy, w, h, angleDeg) {
+// Draws one symbol image using its own raw-space corners, computed by
+// mapping three points in VIEWPORT space (the icon's own bottom-left,
+// bottom-right, and top-left corners, AS ACTUALLY ROTATED ON SCREEN) through
+// `toRaw` one point at a time, instead of relying on pdf-lib's own `rotate:`
+// parameter to rotate the whole image. This function must be called OUTSIDE
+// any active pushed `cm` graphics state (see the per-page loop below) since
+// `toRaw` already returns final raw-space coordinates -- an active `cm`
+// would transform them a second time.
+//
+// The three corners are rotated using the EXACT same formula stage.js's
+// on-screen rendering uses (ctx.rotate() in _renderOverlay -- a standard
+// rotation matrix applied directly to y-down screen-pixel offsets, which is
+// what makes ctx.rotate(θ) look clockwise for positive θ). Matching that
+// formula here -- rather than reusing pdf-lib's own `rotate:` parameter,
+// which turned out to need the OPPOSITE sign because pdf-lib draws into the
+// page's native y-up space, a reflection of screen space -- is what makes
+// an exported symbol's rotation direction match what's on screen. (An
+// earlier version of this function reused pdf-lib's rotate: parameter
+// directly and was calibrated against this file's old anchor formula, which
+// -- it turns out -- had this same sign bug even on an unrotated page; it
+// only ever got tested at rotation 0, where the sign of this bug has no
+// effect.) Deriving the raw corners geometrically via `toRaw` and computing
+// pdf-lib's `rotate:` value from THEM (via atan2) sidesteps needing pdf-lib's
+// rotate convention to line up with anything -- it's whatever the geometry
+// says it should be.
+function drawSymbolDirect(page, image, toRaw, cx, cy, w, h, angleDeg) {
   const theta = (angleDeg * Math.PI) / 180;
   const cos = Math.cos(theta);
   const sin = Math.sin(theta);
-  const anchorX = cx - (w / 2) * cos + (h / 2) * sin;
-  const anchorY = cy - (w / 2) * sin - (h / 2) * cos;
-  page.drawImage(image, { x: anchorX, y: anchorY, width: w, height: h, rotate: degrees(angleDeg) });
+  const hw = w / 2;
+  const hh = h / 2;
+  // Rotates an unrotated local offset (y-down, origin at the icon's center)
+  // by angleDeg clockwise -- identical to what ctx.rotate(theta) does to a
+  // point in stage.js's on-screen rendering.
+  const rotateCw = (lx, ly) => ({ x: lx * cos - ly * sin, y: lx * sin + ly * cos });
+  const bl = rotateCw(-hw, hh); // bottom-left: pdf-lib's own drawImage anchor corner
+  const br = rotateCw(hw, hh); // bottom-right: anchor's local +width direction
+  const tl = rotateCw(-hw, -hh); // top-left: anchor's local +height direction
+  const p0 = toRaw(cx + bl.x, cy + bl.y);
+  const pX = toRaw(cx + br.x, cy + br.y);
+  const pY = toRaw(cx + tl.x, cy + tl.y);
+  const edgeX = { x: pX[0] - p0[0], y: pX[1] - p0[1] };
+  const edgeY = { x: pY[0] - p0[0], y: pY[1] - p0[1] };
+  const rotateDeg = (Math.atan2(edgeX.y, edgeX.x) * 180) / Math.PI;
+  page.drawImage(image, {
+    x: p0[0],
+    y: p0[1],
+    width: Math.hypot(edgeX.x, edgeX.y),
+    height: Math.hypot(edgeY.x, edgeY.y),
+    rotate: degrees(rotateDeg),
+  });
 }
 
 // Small legend box, bottom-right corner of a single sheet — same box the
@@ -265,7 +334,26 @@ function drawProjectSummaryPage(page, width, height, allSymbols, numPages, proje
   }
 }
 
-export async function exportAnnotatedPdf({ pdfBytes, symbols, strokes, projectName }) {
+// Computes the `cm` matrix that maps a "local" y-up coordinate system sized
+// to the page's pdf.js VIEWPORT (post-rotation) dimensions into the page's
+// raw pdf-lib drawing space -- see the file header comment for why this is
+// needed. Sampled from pdf.js's own viewport.convertToPdfPoint() at three
+// points (origin + one unit along each local axis) rather than hand-derived,
+// so this always matches whatever pdf.js itself does for this page's
+// rotation, including which axis flips/swaps -- there's no case-by-case
+// 0/90/180/270 logic to get wrong here.
+function localToRawMatrix(viewport) {
+  // convertToPdfPoint expects pdf.js's own (y-down) viewport space; flipping
+  // y here first is what makes "local" a y-up space of the same dimensions,
+  // matching the space every draw call below already assumes.
+  const toRaw = (x, y) => viewport.convertToPdfPoint(x, viewport.height - y);
+  const p0 = toRaw(0, 0);
+  const pX = toRaw(1, 0);
+  const pY = toRaw(0, 1);
+  return [pX[0] - p0[0], pX[1] - p0[1], pY[0] - p0[0], pY[1] - p0[1], p0[0], p0[1]];
+}
+
+export async function exportAnnotatedPdf({ pdfBytes, symbols, strokes, projectName, pdfJsDoc }) {
   const pdfDoc = await PDFDocument.load(pdfBytes);
   const pages = pdfDoc.getPages();
   const numPages = pages.length;
@@ -288,23 +376,62 @@ export async function exportAnnotatedPdf({ pdfBytes, symbols, strokes, projectNa
   for (let i = 0; i < pages.length; i++) {
     const pageNum = i + 1;
     const page = pages[i];
-    const { width: pageWidth, height: pageHeight } = page.getSize();
+
+    // pageWidth/pageHeight below is deliberately the pdf.js VIEWPORT size
+    // (post-rotation, "as actually displayed") whenever pdf.js is available,
+    // not pdf-lib's raw page.getSize() -- see the file header comment.
+    // `toRaw` maps a VIEWPORT-space point directly to its exact raw pdf-lib
+    // point, one point at a time -- symbols use this (see drawSymbolDirect
+    // above for why). Strokes and the legend box instead draw inside a
+    // single pushed `cm` transform equal to this same mapping (see
+    // localToRawMatrix below) since neither of them needs pdf-lib's own
+    // `rotate:` parameter, so pushing one transform and leaving their
+    // existing (pre-rotation-support) drawing code completely unchanged is
+    // simpler than converting them to point-by-point mapping too.
+    let pageWidth, pageHeight, toRaw, viewport;
+    if (pdfJsDoc) {
+      const pjsPage = await pdfJsDoc.getPage(pageNum);
+      viewport = pjsPage.getViewport({ scale: 1 });
+      pageWidth = viewport.width;
+      pageHeight = viewport.height;
+      toRaw = (vx, vy) => viewport.convertToPdfPoint(vx, vy);
+    } else {
+      // No pdf.js document passed in -- fall back to the page's own raw
+      // size and a plain y-flip. Only correct for an unrotated page, same as
+      // this function's behavior before rotation support existed.
+      const size = page.getSize();
+      pageWidth = size.width;
+      pageHeight = size.height;
+      toRaw = (vx, vy) => [vx, pageHeight - vy];
+    }
+
     const pageSymbols = (symbols || []).filter((s) => (s.page || 1) === pageNum);
     const pageStrokes = (strokes || []).filter((s) => (s.page || 1) === pageNum);
 
-    // Draw each placed symbol. Stored symbol.x/y are in pdf.js viewport space
-    // (scale 1, y grows downward from the top) — convert to PDF's bottom-up space.
+    // Draw each placed symbol directly in raw space via drawSymbolDirect,
+    // deliberately BEFORE the `cm` pushed below -- toRaw already returns
+    // final raw coordinates, so an active `cm` at this point would
+    // transform them a second time (see drawSymbolDirect's comment).
     for (const s of pageSymbols) {
       const img = embedded.get(s.defId);
       if (!img) continue;
-      const cx = s.x;
-      const cy = pageHeight - s.y;
-      drawRotatedImageCentered(page, img, cx, cy, SYMBOL_SIZE_PDF_PTS, SYMBOL_SIZE_PDF_PTS, s.rotation || 0);
+      drawSymbolDirect(page, img, toRaw, s.x, s.y, SYMBOL_SIZE_PDF_PTS, SYMBOL_SIZE_PDF_PTS, s.rotation || 0);
+    }
+
+    // Strokes and the legend box draw inside a single pushed `cm` transform
+    // (an identity transform on an unrotated page, so nothing changes
+    // there) so their existing, already-correct drawing code can stay
+    // exactly as it was before rotation support existed.
+    let wrappedTransform = false;
+    if (pdfJsDoc) {
+      const m = localToRawMatrix(viewport);
+      page.pushOperators(pushGraphicsState(), concatTransformationMatrix(m[0], m[1], m[2], m[3], m[4], m[5]));
+      wrappedTransform = true;
     }
 
     // Freeform pencil markup, on top of the symbols (same convention as
-    // on-screen). Same viewport-space -> PDF-space y-flip as symbols above.
-    // A 1-point stroke (a tap with no drag) is just a single dot, drawn
+    // on-screen). Same viewport-space -> PDF-space y-flip as before. A
+    // 1-point stroke (a tap with no drag) is just a single dot, drawn
     // directly — no overlap possible, so no reason to route it through a
     // canvas. Multi-point strokes go through strokeToPngBytes() so the
     // whole line renders as one continuous shape (see that function's
@@ -330,6 +457,10 @@ export async function exportAnnotatedPdf({ pdfBytes, symbols, strokes, projectNa
     }
 
     drawLegendBox(page, pageWidth, pageHeight, pageSymbols, font, fontBold, numPages > 1 ? `PAGE ${pageNum} LEGEND` : 'SYMBOL LEGEND');
+
+    if (wrappedTransform) {
+      page.pushOperators(popGraphicsState());
+    }
   }
 
   // Always append one full-page legend summary at the end, even for a
