@@ -24,7 +24,7 @@ const CURRENT_PROJECT_ID = 'current'; // Phase 1: single active project, autosav
 // showing v13's UI, which is exactly as confusing as having no badge at all.
 // MUST be bumped in lockstep with CACHE_VERSION in sw.js -- see the ONE RULE
 // comment there.
-const APP_VERSION = 'v26';
+const APP_VERSION = 'v27';
 
 const el = {
   uploadScreen: document.getElementById('upload-screen'),
@@ -432,6 +432,12 @@ function initToolbar() {
         symbols: allSymbols,
         strokes: allStrokes,
         projectName,
+        // Lets export.js correctly place content on a page with a /Rotate
+        // flag (common on a real full-size architectural sheet) by asking
+        // pdf.js's own viewport for that page instead of assuming pdf-lib's
+        // raw (pre-rotation) page dimensions -- see export.js's header
+        // comment for the full explanation.
+        pdfJsDoc: pdfSource.pdfDoc,
       });
       downloadBlob(bytes, `${projectName || 'markup'}.pdf`, 'application/pdf');
     } catch (err) {
