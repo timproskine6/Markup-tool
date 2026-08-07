@@ -15,6 +15,14 @@
 // findPlace status messaging in main.js for how a textless page surfaces
 // that gap today.
 
+import { SYMBOL_SIZE_PDF_PTS } from './stage.js';
+
+// How far above the text's own top edge to center the placed symbol, in PDF
+// points, so it reads as sitting ABOVE the label instead of overlapping it.
+// Half the symbol's own footprint clears the symbol itself; a few extra
+// points leaves a visible gap instead of the two touching edge-to-edge.
+const PLACEMENT_GAP_PDF_PTS = SYMBOL_SIZE_PDF_PTS / 2 + 3;
+
 // Combines two PDF/Canvas-style 2D affine matrices [a,b,c,d,e,f], where m2 is
 // applied first and m1 second (matches pdf.js's own Util.transform(m1, m2)
 // convention) -- used to place a text item's local glyph-space transform
@@ -33,32 +41,49 @@ export function combineTransforms(m1, m2) {
   ];
 }
 
-// Centroid of a text item's glyph box under a given combined transform.
-// Averaging all 4 corners (rather than just reading the transform's own
-// translation, which is really the baseline start of the FIRST glyph) keeps
-// this correct even for rotated text -- common in title blocks (e.g. a
-// vertical "SHEET SIZE 24x36" label) -- since it doesn't assume the box is
-// axis-aligned.
-function itemCenter(item, combined) {
+// Where to drop the symbol for a matched text item: horizontally centered
+// on the text, positioned just above its top edge.
+//
+// IMPORTANT: item.width/item.height are already lengths in the SAME
+// coordinate space as item.transform's own translation (e, f) -- pdf.js
+// computes them that way, and its own text-layer renderer treats them as
+// plain scalars, only ever using the transform's linear part (a, b, c, d) to
+// read off a ROTATION ANGLE and a font-size magnitude, never to re-scale
+// width/height through the full matrix. An earlier version of this function
+// got that wrong -- it ran width/height through the FULL combined matrix
+// like a local pre-transform coordinate, which re-applied item.transform's
+// own internal scale (e.g. the font's em-to-user-space factor) on top of a
+// width that already had it baked in. On plans with a large internal scale
+// factor (common in CAD/Revit exports) that put the symbol far off in the
+// direction of the transform -- exactly the "placed far right and up from
+// the text" bug. The fix: use the combined transform ONLY for the item's
+// origin and its direction (as unit vectors), and scale width/height by the
+// outer viewport's own scale alone (1x here, since getPageTextData always
+// requests scale: 1), matching how pdf.js's own text layer does it.
+function matchPlacement(item, combined, viewportTransform) {
   const [a, b, c, d, e, f] = combined;
-  const w = item.width || 0;
+  const viewportScale = Math.hypot(viewportTransform[0], viewportTransform[1]) || 1;
+
+  const xLen = Math.hypot(a, b) || 1;
+  const unitX = { x: a / xLen, y: b / xLen }; // output-space "reading direction" of the text
+  const yLen = Math.hypot(c, d) || 1;
+  const unitY = { x: c / yLen, y: d / yLen }; // output-space "up from baseline" direction
+
+  const width = (item.width || 0) * viewportScale;
   // item.height isn't always populated by pdf.js depending on the font/PDF;
-  // fall back to the transform's own vertical scale (glyph em size) as a
-  // reasonable approximation when it's missing.
-  const h = item.height || Math.hypot(b, d) || 10;
-  const corners = [
-    [0, 0],
-    [w, 0],
-    [0, h],
-    [w, h],
-  ];
-  let sx = 0;
-  let sy = 0;
-  for (const [lx, ly] of corners) {
-    sx += a * lx + c * ly + e;
-    sy += b * lx + d * ly + f;
-  }
-  return { x: sx / 4, y: sy / 4 };
+  // Math.hypot(item.transform[2], item.transform[3]) is pdf.js's own
+  // fallback for a glyph's em-height in this same pre-viewport-scale space.
+  const height = (item.height || Math.hypot(item.transform[2], item.transform[3]) || 10) * viewportScale;
+
+  const originX = e;
+  const originY = f;
+  const halfWidth = width / 2;
+  const topOffset = height + PLACEMENT_GAP_PDF_PTS;
+
+  return {
+    x: originX + unitX.x * halfWidth + unitY.x * topOffset,
+    y: originY + unitX.y * halfWidth + unitY.y * topOffset,
+  };
 }
 
 // pageTextData: { items, viewportTransform } from PdfViewerSource.getPageTextData().
@@ -86,9 +111,9 @@ export function findTextMatches(pageTextData, query) {
     if (!Array.isArray(item.transform) || item.transform.length !== 6) continue;
     try {
       const combined = combineTransforms(viewportTransform, item.transform);
-      const center = itemCenter(item, combined);
-      if (!Number.isFinite(center.x) || !Number.isFinite(center.y)) continue;
-      matches.push({ x: center.x, y: center.y, text: str });
+      const placement = matchPlacement(item, combined, viewportTransform);
+      if (!Number.isFinite(placement.x) || !Number.isFinite(placement.y)) continue;
+      matches.push({ x: placement.x, y: placement.y, text: str });
     } catch (err) {
       console.warn('Find & Place: skipping a malformed text item', str, err);
     }
