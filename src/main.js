@@ -7,6 +7,7 @@ import { saveProject, loadProject, debounce } from './storage.js';
 import { exportAnnotatedPdf, legendToCsv, downloadBlob } from './export.js';
 import * as symbolPrefs from './symbolPrefs.js';
 import { findTextMatches } from './textSearch.js';
+import { findPictureMatches, captureTemplatePreview, placementForMatch } from './pictureSearch.js';
 
 const CURRENT_PROJECT_ID = 'current'; // Phase 1: single active project, autosaved on-device.
 
@@ -23,7 +24,7 @@ const CURRENT_PROJECT_ID = 'current'; // Phase 1: single active project, autosav
 // showing v13's UI, which is exactly as confusing as having no badge at all.
 // MUST be bumped in lockstep with CACHE_VERSION in sw.js -- see the ONE RULE
 // comment there.
-const APP_VERSION = 'v23';
+const APP_VERSION = 'v24';
 
 const el = {
   uploadScreen: document.getElementById('upload-screen'),
@@ -71,6 +72,13 @@ const el = {
   findPlaceInput: document.getElementById('find-place-input'),
   findPlaceRunBtn: document.getElementById('find-place-run-btn'),
   findPlaceStatus: document.getElementById('find-place-status'),
+  pictureSnipOverlay: document.getElementById('picture-snip-overlay'),
+  pictureSnipRect: document.getElementById('picture-snip-rect'),
+  pictureSnipCancelBtn: document.getElementById('picture-snip-cancel-btn'),
+  pictureSnipBtn: document.getElementById('picture-snip-btn'),
+  pictureTemplatePreview: document.getElementById('picture-template-preview'),
+  pictureRotationCheck: document.getElementById('picture-rotation-check'),
+  pictureSearchRunBtn: document.getElementById('picture-search-run-btn'),
 };
 
 let pdfSource = null;
@@ -334,6 +342,19 @@ async function openPdf(bytes, name) {
   // project. Left alone, tapping that same card again would then read as a
   // toggle-OFF (armedId already matches) and silently arm nothing.
   if (palette) palette.setArmed(null);
+
+  // A snipped template belongs to whatever plan was loaded when it was
+  // captured -- pdfSource/currentPage are about to point at a different
+  // document entirely, so any leftover snip from before is no longer valid.
+  // (Not calling exitSnipMode() here -- that also un-hides find-place-panel,
+  // which must stay exactly as hidden/shown as it already was.)
+  snippedTemplate = null;
+  snipDragStart = null;
+  snipDragging = false;
+  el.pictureSnipOverlay.classList.remove('active');
+  el.pictureSnipRect.classList.add('hidden');
+  el.pictureTemplatePreview.classList.add('hidden');
+  el.pictureSearchRunBtn.classList.add('hidden');
 
   projectName = name || projectName;
   el.projectName.value = projectName;
@@ -634,6 +655,224 @@ function initFindPlace() {
   });
 }
 
+// Picture search: same auto-place-immediately behavior as Find & Place above
+// (reuses lastFindPlaceBatch/undoLastFindPlaceBatch/setFindPlaceStatus, and
+// the same "This page / All pages" scope radios), but matched by comparing
+// rendered pixels instead of reading the PDF's text layer -- see
+// src/pictureSearch.js for the matching engine and why that's needed for a
+// symbol that was never real selectable text. The user drags a selection
+// rectangle directly on the plan ("snip") rather than uploading a real
+// screenshot; #picture-snip-overlay covers the stage while that drag is in
+// progress so it can't be misread as a pan/zoom/symbol-placement gesture on
+// Stage underneath it.
+let snippedTemplate = null; // { sourcePage, pdfRect } | null
+let snipDragStart = null; // { x, y } in the overlay's own local (CSS px) space, same convention as Stage's _localPoint
+let snipDragging = false;
+const MIN_SNIP_DRAG_PX = 12; // an accidental tap/tiny drag isn't a real selection -- ignore it rather than trying to search on a near-zero-size crop
+
+function enterSnipMode() {
+  if (!stage || !pdfSource) return;
+  closeContextMenu();
+  el.selectionToolbar.classList.add('hidden');
+  el.pictureSnipRect.classList.add('hidden');
+  el.pictureSnipOverlay.classList.add('active');
+  el.findPlacePanel.classList.add('hidden');
+}
+
+function exitSnipMode() {
+  el.pictureSnipOverlay.classList.remove('active');
+  el.pictureSnipRect.classList.add('hidden');
+  el.findPlacePanel.classList.remove('hidden');
+  snipDragStart = null;
+  snipDragging = false;
+}
+
+function snipLocalPoint(e) {
+  const rect = el.pictureSnipOverlay.getBoundingClientRect();
+  return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+}
+
+function updateSnipRectVisual(a, b) {
+  const left = Math.min(a.x, b.x);
+  const top = Math.min(a.y, b.y);
+  el.pictureSnipRect.style.left = left + 'px';
+  el.pictureSnipRect.style.top = top + 'px';
+  el.pictureSnipRect.style.width = Math.abs(a.x - b.x) + 'px';
+  el.pictureSnipRect.style.height = Math.abs(a.y - b.y) + 'px';
+}
+
+function onSnipPointerDown(e) {
+  e.preventDefault();
+  el.pictureSnipOverlay.setPointerCapture(e.pointerId);
+  snipDragStart = snipLocalPoint(e);
+  snipDragging = true;
+  el.pictureSnipRect.classList.remove('hidden');
+  updateSnipRectVisual(snipDragStart, snipDragStart);
+}
+
+function onSnipPointerMove(e) {
+  if (!snipDragging || !snipDragStart) return;
+  updateSnipRectVisual(snipDragStart, snipLocalPoint(e));
+}
+
+async function onSnipPointerUp(e) {
+  if (!snipDragging || !snipDragStart) return;
+  const start = snipDragStart;
+  const end = snipLocalPoint(e);
+  snipDragging = false;
+  snipDragStart = null;
+
+  const screenW = Math.abs(end.x - start.x);
+  const screenH = Math.abs(end.y - start.y);
+  if (screenW < MIN_SNIP_DRAG_PX || screenH < MIN_SNIP_DRAG_PX) {
+    // Too small to be a real selection -- stay in snip mode so a shaky first
+    // attempt (common on a touchscreen) doesn't have to be re-armed.
+    el.pictureSnipRect.classList.add('hidden');
+    return;
+  }
+
+  // Same formula as Stage's own private _screenToPdf -- Stage doesn't expose
+  // it publicly, but view.scale/offsetX/offsetY are plain readable fields,
+  // and this overlay sits at the exact same position/size as stage-container
+  // (both position:absolute; inset:0 inside .stage-wrap), so their local
+  // coordinate spaces line up 1-for-1.
+  const view = stage.view;
+  const screenLeft = Math.min(start.x, end.x);
+  const screenTop = Math.min(start.y, end.y);
+  const pdfX0 = (screenLeft - view.offsetX) / view.scale;
+  const pdfY0 = (screenTop - view.offsetY) / view.scale;
+  const pdfX1 = (screenLeft + screenW - view.offsetX) / view.scale;
+  const pdfY1 = (screenTop + screenH - view.offsetY) / view.scale;
+  const pdfRect = {
+    x: Math.min(pdfX0, pdfX1),
+    y: Math.min(pdfY0, pdfY1),
+    w: Math.abs(pdfX1 - pdfX0),
+    h: Math.abs(pdfY1 - pdfY0),
+  };
+  const sourcePage = currentPage;
+
+  exitSnipMode();
+  setFindPlaceStatus('Capturing…');
+
+  try {
+    const dataUrl = await captureTemplatePreview(pdfSource, sourcePage, pdfRect);
+    snippedTemplate = { sourcePage, pdfRect };
+    el.pictureTemplatePreview.src = dataUrl;
+    el.pictureTemplatePreview.classList.remove('hidden');
+    el.pictureSearchRunBtn.classList.remove('hidden');
+    setFindPlaceStatus('Symbol captured — arm a palette symbol, then tap "Find & Place by picture" below.');
+  } catch (err) {
+    console.error('Snip capture failed:', err);
+    setFindPlaceStatus('Could not capture that selection — try again.', { error: true });
+  }
+}
+
+function onSnipPointerCancel() {
+  snipDragging = false;
+  snipDragStart = null;
+  el.pictureSnipRect.classList.add('hidden');
+}
+
+// A short, human-readable explanation for why a page contributed nothing --
+// pictureSearch.js's `reason` codes are machine-readable on purpose (see its
+// own header comment), this is the one place they get turned into words.
+function pictureReasonText(reason) {
+  if (reason === 'too_faint') return "that snip didn't have enough visible ink to search with — try snipping tighter around just the symbol";
+  if (reason === 'too_small') return 'that snip was too small to search with';
+  if (reason === 'too_ambiguous') return "that snip matched too much of the page to search reliably — try snipping a smaller, more distinctive part of the symbol";
+  return 'search issue';
+}
+
+async function runPictureFindAndPlace() {
+  if (!stage || !pdfSource || !snippedTemplate) return;
+  const defId = stage.armedDefId;
+  if (!defId) {
+    setFindPlaceStatus('Arm a symbol from the palette first, then run this again.', { error: true });
+    return;
+  }
+  const scopeInput = document.querySelector('input[name="find-place-scope"]:checked');
+  const scope = scopeInput ? scopeInput.value : 'page';
+  const pages = scope === 'all' ? Array.from({ length: numPages }, (_, i) => i + 1) : [currentPage];
+  const rotationTolerant = !!el.pictureRotationCheck.checked;
+
+  el.pictureSearchRunBtn.disabled = true;
+  setFindPlaceStatus('Searching…');
+
+  const placed = []; // { id, page }
+  const pagesWithIssues = []; // { page, reason } -- template itself unusable on that page's scan, or too ambiguous there
+  const pagesWithErrors = []; // { page, message } -- everything else that threw
+
+  for (const pageNum of pages) {
+    try {
+      const { matches, reason } = await findPictureMatches(pdfSource, pageNum, snippedTemplate, { rotationTolerant });
+      if (reason) {
+        pagesWithIssues.push({ page: pageNum, reason });
+        continue;
+      }
+      for (const m of matches) {
+        const { x, y } = placementForMatch(m);
+        const id = 's_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 7);
+        allSymbols.push({ id, defId, x, y, rotation: 0, page: pageNum });
+        placed.push({ id, page: pageNum });
+      }
+    } catch (err) {
+      console.error(`Picture search failed on page ${pageNum}:`, err);
+      pagesWithErrors.push({ page: pageNum, message: err && err.message ? err.message : String(err) });
+    }
+  }
+
+  el.pictureSearchRunBtn.disabled = false;
+
+  if (placed.some((p) => p.page === currentPage)) {
+    stage.setSymbols(allSymbols.filter((s) => (s.page || 1) === currentPage));
+  }
+  if (placed.length > 0) {
+    renderLegend();
+    persist();
+  }
+
+  const issueNote = pagesWithIssues.length ? ` (${pictureReasonText(pagesWithIssues[0].reason)})` : '';
+
+  if (pagesWithErrors.length > 0 && placed.length === 0) {
+    lastFindPlaceBatch = null;
+    const first = pagesWithErrors[0];
+    setFindPlaceStatus(
+      `Search failed on page ${first.page}: ${first.message}${pagesWithErrors.length > 1 ? ` (+${pagesWithErrors.length - 1} more page${pagesWithErrors.length > 2 ? 's' : ''})` : ''}`,
+      { error: true }
+    );
+    return;
+  }
+
+  if (placed.length === 0) {
+    lastFindPlaceBatch = null;
+    setFindPlaceStatus(`No matches found for that symbol${issueNote}.`, { error: true });
+    return;
+  }
+
+  lastFindPlaceBatch = placed;
+  setFindPlaceStatus(`Placed ${placed.length} symbol${placed.length === 1 ? '' : 's'} matching the snipped symbol${issueNote}.`);
+  showSwToast(`Placed ${placed.length} symbol${placed.length === 1 ? '' : 's'} — tap to undo`, {
+    duration: 6000,
+    onClick: undoLastFindPlaceBatch,
+  });
+}
+
+function initPictureSearch() {
+  el.pictureSnipBtn.addEventListener('click', enterSnipMode);
+  // The cancel button lives INSIDE the overlay it sits on top of, so its own
+  // pointerdown would otherwise bubble straight into the overlay's drag
+  // handler below and get read as the start of a (tiny, then-ignored) snip
+  // drag instead of a cancel tap -- stopping propagation here keeps the two
+  // from fighting over the same gesture.
+  el.pictureSnipCancelBtn.addEventListener('pointerdown', (e) => e.stopPropagation());
+  el.pictureSnipCancelBtn.addEventListener('click', exitSnipMode);
+  el.pictureSnipOverlay.addEventListener('pointerdown', onSnipPointerDown);
+  el.pictureSnipOverlay.addEventListener('pointermove', onSnipPointerMove);
+  el.pictureSnipOverlay.addEventListener('pointerup', onSnipPointerUp);
+  el.pictureSnipOverlay.addEventListener('pointercancel', onSnipPointerCancel);
+  el.pictureSearchRunBtn.addEventListener('click', runPictureFindAndPlace);
+}
+
 // Reflects stage.penMode/penColor in the toolbar — called after every
 // armed/pen-mode change, since arming a palette symbol also silently exits
 // pen mode (see Stage#armSymbol) and this is the one place that needs to
@@ -875,6 +1114,7 @@ async function init() {
   initSelectionToolbar();
   initContextMenu();
   initFindPlace();
+  initPictureSearch();
   initPencilTool();
   initPageNav();
   initPastePill();
