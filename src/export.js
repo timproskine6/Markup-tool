@@ -5,10 +5,11 @@
 // (every page), each item tagged with a `page` number (1-based; missing/undefined
 // means page 1, for projects saved before multi-page support existed) — never
 // just the page currently on screen. Every page of the source PDF gets its own
-// symbols/strokes flattened onto it, plus a small per-page legend box. A
-// multi-page project also gets one extra appended page with the combined
-// project-wide totals, since a single sheet's corner box only ever reflects
-// that sheet.
+// symbols/strokes flattened onto it, plus a small per-page legend box. Every
+// export also gets one extra appended page with a full-size legend (combined
+// project-wide totals plus a per-page breakdown once there's more than one
+// page) — always, even for a single-page plan, since the small corner box
+// alone isn't meant to stand in for a real legend page.
 
 import { SYMBOLS_BY_ID } from './symbols.js';
 import { computeLegend } from './legend.js';
@@ -191,22 +192,29 @@ function drawLegendBox(page, pageWidth, pageHeight, symbols, font, fontBold, tit
   });
 }
 
-// A full-page summary appended after every real sheet in a multi-page
-// export: combined counts across the whole project, plus a per-page
-// breakdown so a reviewer doesn't have to flip through every sheet's corner
-// box to see how the total was built up.
+// A full-page summary appended after every real sheet in the export: the
+// combined symbol counts, big and easy to read, plus (for a multi-page
+// project) a per-page breakdown so a reviewer doesn't have to flip through
+// every sheet's small corner box to see how the total was built up. Appended
+// unconditionally -- including for a single-page plan -- since that corner
+// box is easy to miss/hard to read at a glance and Tim's workflow expects a
+// dedicated legend page at the end of every export, not just multi-page ones.
 function drawProjectSummaryPage(page, width, height, allSymbols, numPages, projectName, font, fontBold) {
   const margin = 48;
   let ty = height - margin;
 
-  page.drawText('PROJECT SYMBOL LEGEND — ALL PAGES', { x: margin, y: ty, size: 16, font: fontBold, color: rgb(0.1, 0.1, 0.1) });
+  page.drawText(numPages > 1 ? 'PROJECT SYMBOL LEGEND — ALL PAGES' : 'SYMBOL LEGEND', { x: margin, y: ty, size: 16, font: fontBold, color: rgb(0.1, 0.1, 0.1) });
   ty -= 22;
   if (projectName) {
     page.drawText(projectName, { x: margin, y: ty, size: 11, font, color: rgb(0.35, 0.35, 0.35) });
     ty -= 16;
   }
-  page.drawText(`${numPages} pages`, { x: margin, y: ty, size: 10, font, color: rgb(0.4, 0.4, 0.4) });
-  ty -= 30;
+  if (numPages > 1) {
+    page.drawText(`${numPages} pages`, { x: margin, y: ty, size: 10, font, color: rgb(0.4, 0.4, 0.4) });
+    ty -= 30;
+  } else {
+    ty -= 14;
+  }
 
   const { rows, total } = computeLegend(allSymbols);
   const colAbbr = margin;
@@ -231,25 +239,29 @@ function drawProjectSummaryPage(page, width, height, allSymbols, numPages, proje
   ty -= 6;
   page.drawLine({ start: { x: margin, y: ty }, end: { x: width - margin, y: ty }, thickness: 1, color: rgb(0.7, 0.7, 0.7) });
   ty -= rowH;
-  page.drawText(`PROJECT TOTAL: ${total}`, { x: margin, y: ty, size: 12, font: fontBold, color: rgb(0.1, 0.1, 0.1) });
+  page.drawText(`${numPages > 1 ? 'PROJECT TOTAL' : 'TOTAL'}: ${total}`, { x: margin, y: ty, size: 12, font: fontBold, color: rgb(0.1, 0.1, 0.1) });
 
-  ty -= 34;
-  page.drawText('Per-page breakdown', { x: margin, y: ty, size: 11, font: fontBold, color: rgb(0.2, 0.2, 0.2) });
-  ty -= 18;
-  for (let p = 1; p <= numPages; p++) {
-    const pageSymbols = allSymbols.filter((s) => (s.page || 1) === p);
-    if (pageSymbols.length === 0) continue;
-    const { rows: pRows } = computeLegend(pageSymbols);
-    const summary = pRows.map((r) => `${r.def.abbr} x${r.count}`).join('   ');
-    page.drawText(`Page ${p}: ${pageSymbols.length} total — ${summary}`, {
-      x: margin,
-      y: ty,
-      size: 9,
-      font,
-      color: rgb(0.25, 0.25, 0.25),
-    });
-    ty -= 14;
-    if (ty < margin) break; // simple guard against overflowing a very long project — not expected in practice
+  // The per-page breakdown only adds anything beyond the totals table above
+  // when there's more than one page to break down.
+  if (numPages > 1) {
+    ty -= 34;
+    page.drawText('Per-page breakdown', { x: margin, y: ty, size: 11, font: fontBold, color: rgb(0.2, 0.2, 0.2) });
+    ty -= 18;
+    for (let p = 1; p <= numPages; p++) {
+      const pageSymbols = allSymbols.filter((s) => (s.page || 1) === p);
+      if (pageSymbols.length === 0) continue;
+      const { rows: pRows } = computeLegend(pageSymbols);
+      const summary = pRows.map((r) => `${r.def.abbr} x${r.count}`).join('   ');
+      page.drawText(`Page ${p}: ${pageSymbols.length} total — ${summary}`, {
+        x: margin,
+        y: ty,
+        size: 9,
+        font,
+        color: rgb(0.25, 0.25, 0.25),
+      });
+      ty -= 14;
+      if (ty < margin) break; // simple guard against overflowing a very long project — not expected in practice
+    }
   }
 }
 
@@ -320,10 +332,12 @@ export async function exportAnnotatedPdf({ pdfBytes, symbols, strokes, projectNa
     drawLegendBox(page, pageWidth, pageHeight, pageSymbols, font, fontBold, numPages > 1 ? `PAGE ${pageNum} LEGEND` : 'SYMBOL LEGEND');
   }
 
-  // A single sheet's corner box only ever shows that sheet's counts — append
-  // one combined summary page so the project total is somewhere too, instead
-  // of making a reviewer add up every sheet's box by hand.
-  if (numPages > 1) {
+  // Always append one full-page legend summary at the end, even for a
+  // single-page plan — the small per-sheet corner box is easy to miss/hard
+  // to read at a glance, and this is meant to be a real "legend page"
+  // deliverable every export includes, not just an aid for multi-page
+  // projects.
+  {
     const { width, height } = pages[0].getSize();
     const summaryPage = pdfDoc.addPage([width, height]);
     drawProjectSummaryPage(summaryPage, width, height, symbols || [], numPages, projectName, font, fontBold);
