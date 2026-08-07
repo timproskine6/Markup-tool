@@ -18,7 +18,7 @@
 // that distinction matters. If these two values ever drift apart by
 // accident, the symptom is a tab permanently showing itself a "there's an
 // update, tap to reload" prompt even right after reloading.
-const CACHE_VERSION = 'v24';
+const CACHE_VERSION = 'v25';
 const CACHE_NAME = `sprinkler-markup-${CACHE_VERSION}`;
 
 // Every file the app needs to boot and run fully offline. If you add a new
