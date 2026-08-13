@@ -99,7 +99,16 @@ export function findTextMatches(pageTextData, query) {
   const { items, viewportTransform } = pageTextData;
   const matches = [];
   for (const item of items) {
-    const str = item.str || '';
+    // Guard the type explicitly, not just truthiness -- pdfViewer.js's
+    // getPageTextData() already filters these out, but findTextMatches is
+    // cheap to make self-defensive too rather than trusting every caller to
+    // pre-filter. A non-string truthy `str` (seen on some real-world
+    // CAD-exported PDFs) would otherwise reach str.trim() below and throw
+    // "undefined is not a function" (str.trim doesn't exist on it),
+    // uncaught by the try/catch further down -- which only wraps
+    // combineTransforms/matchPlacement -- killing matches for the ENTIRE
+    // page instead of just skipping this one malformed item.
+    const str = typeof item.str === 'string' ? item.str : '';
     if (!str.trim()) continue;
     if (!str.toLowerCase().includes(q)) continue;
     // Some CAD-exported PDFs emit text-content items with a missing or
