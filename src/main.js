@@ -24,7 +24,7 @@ const CURRENT_PROJECT_ID = 'current'; // Phase 1: single active project, autosav
 // showing v13's UI, which is exactly as confusing as having no badge at all.
 // MUST be bumped in lockstep with CACHE_VERSION in sw.js -- see the ONE RULE
 // comment there.
-const APP_VERSION = 'v28';
+const APP_VERSION = 'v29';
 
 const el = {
   uploadScreen: document.getElementById('upload-screen'),
@@ -526,6 +526,22 @@ function initContextMenu() {
 // this auto-places immediately with no per-match review step.
 let lastFindPlaceBatch = null; // Array<{ id, page }> | null
 
+// Both the text search (runFindAndPlace) and the picture search
+// (runPictureFindAndPlace) report into this SAME status line, but they can
+// run at very different speeds -- a picture search over a full-size sheet
+// can take 10+ seconds (see pictureSearch.js), while a text search usually
+// resolves almost instantly. Without a guard, starting a fast text search
+// while a slow picture search from a moment ago is still in flight lets the
+// picture search's LATE result overwrite the text search's already-shown,
+// already-correct one once it finally finishes -- exactly what it looks
+// like when a stale "no matches... try snipping tighter" message is still
+// showing after a completely unrelated text search. Every call into either
+// function grabs the next token; only the invocation still holding the
+// CURRENT token when its search finishes is allowed to touch the status
+// line, so a superseded run's late completion is silently dropped instead
+// of clobbering whatever the user is now looking at.
+let findPlaceRequestSeq = 0;
+
 function setFindPlaceStatus(text, opts = {}) {
   el.findPlaceStatus.textContent = text;
   el.findPlaceStatus.classList.toggle('find-place-status-error', !!opts.error);
@@ -558,6 +574,7 @@ async function runFindAndPlace() {
   const scope = scopeInput ? scopeInput.value : 'page';
   const pages = scope === 'all' ? Array.from({ length: numPages }, (_, i) => i + 1) : [currentPage];
 
+  const requestId = ++findPlaceRequestSeq;
   el.findPlaceRunBtn.disabled = true;
   setFindPlaceStatus('Searching…');
 
@@ -607,6 +624,12 @@ async function runFindAndPlace() {
     renderLegend();
     persist();
   }
+
+  // A newer search (text OR picture -- they share this status line) has
+  // started since this one began; leave the current, more relevant status
+  // alone rather than clobbering it with this now-stale result. See
+  // findPlaceRequestSeq's comment for why this can happen.
+  if (requestId !== findPlaceRequestSeq) return;
 
   const noTextNote = pagesWithNoText.length
     ? ` (${pagesWithNoText.length} page${pagesWithNoText.length > 1 ? 's' : ''} had no searchable text — scanned pages aren't supported yet)`
@@ -801,6 +824,7 @@ async function runPictureFindAndPlace() {
   const pages = scope === 'all' ? Array.from({ length: numPages }, (_, i) => i + 1) : [currentPage];
   const rotationTolerant = !!el.pictureRotationCheck.checked;
 
+  const requestId = ++findPlaceRequestSeq;
   el.pictureSearchRunBtn.disabled = true;
   setFindPlaceStatus('Searching…');
 
@@ -836,6 +860,11 @@ async function runPictureFindAndPlace() {
     renderLegend();
     persist();
   }
+
+  // See findPlaceRequestSeq's comment -- a newer search (text OR picture)
+  // has started since this one began, so don't let this now-stale result
+  // overwrite whatever more relevant status is already showing.
+  if (requestId !== findPlaceRequestSeq) return;
 
   const issueNote = pagesWithIssues.length ? ` (${pictureReasonText(pagesWithIssues[0].reason)})` : '';
 
