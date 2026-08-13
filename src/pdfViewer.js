@@ -73,12 +73,41 @@ export class PdfViewerSource {
   // as opposed to a genuine "your search term isn't on this page" zero
   // matches. Callers surface that distinction rather than treating both the
   // same.
+  //
+  // pdf.js's own getTextContent() (and, rarely, even getPage/getViewport
+  // themselves) can throw on certain real-world PDFs -- seen in practice on
+  // a page from a CAD-exported fire alarm layout that otherwise renders and
+  // displays fine. That's an internal parsing issue in the vendored
+  // library, not something this app can fix directly, so this catches it
+  // and reports the page as textless (plus textExtractionFailed: true, so
+  // callers can word the status differently than a genuinely blank scanned
+  // page) rather than letting it hard-fail the whole search -- especially
+  // important for "All pages" scope, where one bad page shouldn't block
+  // matches on every other page. Deliberately wraps the ENTIRE method body
+  // (not just getTextContent()) -- an earlier version left getPage/
+  // getViewport outside the try, so a failure there surfaced as a raw,
+  // unworded engine error in the UI ("Search failed on page 1: undefined is
+  // not a function...") instead of this same graceful message.
   async getPageTextData(pageNum) {
-    const page = await this.pdfDoc.getPage(pageNum);
-    const viewport = page.getViewport({ scale: 1 });
-    const textContent = await page.getTextContent();
-    const items = textContent.items.filter((it) => it.str && it.str.trim());
-    return { items, viewportTransform: viewport.transform, hasText: items.length > 0 };
+    try {
+      const page = await this.pdfDoc.getPage(pageNum);
+      const viewport = page.getViewport({ scale: 1 });
+      const textContent = await page.getTextContent();
+      // Some CAD-exported PDFs' content streams produce a text item whose
+      // `str` isn't a plain string (seen on real-world plans) -- guard the
+      // type explicitly rather than trusting `it.str && it.str.trim()`,
+      // which throws instead of filtering out a non-string truthy value
+      // (e.g. `it.str.trim` is `undefined`, and calling it throws exactly
+      // "undefined is not a function").
+      const items = textContent.items.filter((it) => typeof it.str === 'string' && it.str.trim());
+      return { items, viewportTransform: viewport.transform, hasText: items.length > 0 };
+    } catch (err) {
+      console.warn(`Find & Place: pdf.js couldn't extract text from page ${pageNum}`, err);
+      // viewport may not exist if getPage/getViewport themselves failed --
+      // callers only read viewportTransform when hasText is true, but keep
+      // this shape-complete (identity transform) rather than undefined.
+      return { items: [], viewportTransform: [1, 0, 0, 1, 0, 0], hasText: false, textExtractionFailed: true };
+    }
   }
 
   // Ensure the backing raster canvas covers `desiredScale` (raster px / PDF pt).
