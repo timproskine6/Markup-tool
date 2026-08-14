@@ -106,7 +106,15 @@ export class PdfViewerSource {
       // viewport may not exist if getPage/getViewport themselves failed --
       // callers only read viewportTransform when hasText is true, but keep
       // this shape-complete (identity transform) rather than undefined.
-      return { items: [], viewportTransform: [1, 0, 0, 1, 0, 0], hasText: false, textExtractionFailed: true };
+      // errorDetail carries the raw engine error text through to the status
+      // line (see main.js) -- this app is used almost entirely on iPad,
+      // where there's no quick way to check a dev console, so a screenshot
+      // of the on-screen message needs to be self-diagnosing. Without this,
+      // reports of this failure are impossible to root-cause: this exact
+      // error hasn't reproduced in desktop testing even against the same
+      // real PDF files that failed on-device, so the raw text IS the report.
+      const errorDetail = err && err.message ? err.message : String(err);
+      return { items: [], viewportTransform: [1, 0, 0, 1, 0, 0], hasText: false, textExtractionFailed: true, errorDetail };
     }
   }
 
