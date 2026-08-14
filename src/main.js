@@ -24,7 +24,7 @@ const CURRENT_PROJECT_ID = 'current'; // Phase 1: single active project, autosav
 // showing v13's UI, which is exactly as confusing as having no badge at all.
 // MUST be bumped in lockstep with CACHE_VERSION in sw.js -- see the ONE RULE
 // comment there.
-const APP_VERSION = 'v29';
+const APP_VERSION = 'v30';
 
 const el = {
   uploadScreen: document.getElementById('upload-screen'),
@@ -593,7 +593,7 @@ async function runFindAndPlace() {
       const pageTextData = await pdfSource.getPageTextData(pageNum);
       if (!pageTextData.hasText) {
         if (pageTextData.textExtractionFailed) {
-          pagesWithExtractionIssues.push(pageNum);
+          pagesWithExtractionIssues.push({ page: pageNum, detail: pageTextData.errorDetail });
         } else {
           pagesWithNoText.push(pageNum);
         }
@@ -634,8 +634,12 @@ async function runFindAndPlace() {
   const noTextNote = pagesWithNoText.length
     ? ` (${pagesWithNoText.length} page${pagesWithNoText.length > 1 ? 's' : ''} had no searchable text — scanned pages aren't supported yet)`
     : '';
+  // Includes the raw underlying error from the first affected page --
+  // this app runs almost entirely on iPad, where there's no quick way to
+  // check a dev console, so the on-screen message needs to be
+  // self-diagnosing from a screenshot alone. See getPageTextData's comment.
   const extractionNote = pagesWithExtractionIssues.length
-    ? ` (couldn't read text on page${pagesWithExtractionIssues.length > 1 ? 's' : ''} ${pagesWithExtractionIssues.join(', ')} — a PDF parsing issue on ${pagesWithExtractionIssues.length > 1 ? 'those pages' : 'that page'}, not a blank one)`
+    ? ` (couldn't read text on page${pagesWithExtractionIssues.length > 1 ? 's' : ''} ${pagesWithExtractionIssues.map((p) => p.page).join(', ')} — a PDF parsing issue on ${pagesWithExtractionIssues.length > 1 ? 'those pages' : 'that page'}, not a blank one${pagesWithExtractionIssues[0].detail ? `: ${pagesWithExtractionIssues[0].detail}` : ''})`
     : '';
   const pageNote = noTextNote + extractionNote;
 
